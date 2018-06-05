@@ -23,7 +23,7 @@ import { ConfirmationState, ConfirmationTargets, ConfirmationButtons } from '../
 @Component({
     selector: 'confiramtion-dialog',
     templateUrl: 'confirmation-dialog.component.html',
-    styleUrls: ['confirmation-dialog.component.css']
+    styleUrls: ['confirmation-dialog.component.scss']
 })
 
 export class ConfirmationDialogComponent implements OnDestroy {
@@ -33,7 +33,7 @@ export class ConfirmationDialogComponent implements OnDestroy {
     message: ConfirmationMessage;
     annouceSubscription: Subscription;
     buttons: ConfirmationButtons;
-
+    isDelete: boolean = false;
     constructor(
         private confirmationService: ConfirmationDialogService,
         private translate: TranslateService) {
@@ -43,7 +43,7 @@ export class ConfirmationDialogComponent implements OnDestroy {
             this.message = msg;
             this.translate.get(this.dialogTitle).subscribe((res: string) => this.dialogTitle = res);
             this.translate.get(this.dialogContent, { 'param': msg.param }).subscribe((res: string) => this.dialogContent = res);
-            //Open dialog
+            // Open dialog
             this.buttons = msg.buttons;
             this.open();
         });
@@ -64,7 +64,8 @@ export class ConfirmationDialogComponent implements OnDestroy {
     }
 
     cancel(): void {
-        if(!this.message){//Inproper condition
+        if (!this.message) {
+            // Inproper condition
             this.close();
             return;
         }
@@ -76,11 +77,13 @@ export class ConfirmationDialogComponent implements OnDestroy {
             data,
             target
         ));
+        this.isDelete = false;
         this.close();
     }
 
     confirm(): void {
-        if(!this.message){//Inproper condition
+        if (!this.message) {
+            // Inproper condition
             this.close();
             return;
         }

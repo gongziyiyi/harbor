@@ -21,16 +21,17 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/vmware/harbor/src/common/api"
+	"github.com/vmware/harbor/src/common"
 	"github.com/vmware/harbor/src/common/dao"
 	"github.com/vmware/harbor/src/common/models"
+	"github.com/vmware/harbor/src/common/utils"
 	"github.com/vmware/harbor/src/common/utils/log"
 	"github.com/vmware/harbor/src/ui/config"
 )
 
 // UserAPI handles request to /api/users/{}
 type UserAPI struct {
-	api.BaseAPI
+	BaseController
 	currentUserID    int
 	userID           int
 	SelfRegistration bool
@@ -45,6 +46,7 @@ type passwordReq struct {
 
 // Prepare validates the URL and parms
 func (ua *UserAPI) Prepare() {
+	ua.BaseController.Prepare()
 	mode, err := config.AuthMode()
 	if err != nil {
 		log.Errorf("failed to get auth mode: %v", err)
@@ -61,15 +63,24 @@ func (ua *UserAPI) Prepare() {
 
 	ua.SelfRegistration = self
 
-	if ua.Ctx.Input.IsPost() {
-		sessionUserID := ua.GetSession("userId")
-		_, _, ok := ua.Ctx.Request.BasicAuth()
-		if sessionUserID == nil && !ok {
+	if !ua.SecurityCtx.IsAuthenticated() {
+		if ua.Ctx.Input.IsPost() {
 			return
 		}
+		ua.HandleUnauthorized()
+		return
 	}
 
-	ua.currentUserID = ua.ValidateUser()
+	user, err := dao.GetUser(models.User{
+		Username: ua.SecurityCtx.GetUsername(),
+	})
+	if err != nil {
+		ua.HandleInternalServerError(fmt.Sprintf("failed to get user %s: %v",
+			ua.SecurityCtx.GetUsername(), err))
+		return
+	}
+
+	ua.currentUserID = user.UserID
 	id := ua.Ctx.Input.Param(":id")
 	if id == "current" {
 		ua.userID = ua.currentUserID
@@ -92,63 +103,69 @@ func (ua *UserAPI) Prepare() {
 		}
 	}
 
-	ua.IsAdmin, err = dao.IsAdminRole(ua.currentUserID)
-	if err != nil {
-		log.Errorf("Error occurred in IsAdminRole:%v", err)
-		ua.CustomAbort(http.StatusInternalServerError, "Internal error.")
-	}
-
+	ua.IsAdmin = ua.SecurityCtx.IsSysAdmin()
 }
 
 // Get ...
 func (ua *UserAPI) Get() {
-	if ua.userID == 0 { //list users
-		if !ua.IsAdmin {
-			log.Errorf("Current user, id: %d does not have admin role, can not list users", ua.currentUserID)
-			ua.RenderError(http.StatusForbidden, "User does not have admin role")
-			return
-		}
-		username := ua.GetString("username")
-		userQuery := models.User{}
-		if len(username) > 0 {
-			userQuery.Username = username
-		}
-		userList, err := dao.ListUsers(userQuery)
-		if err != nil {
-			log.Errorf("Failed to get data from database, error: %v", err)
-			ua.RenderError(http.StatusInternalServerError, "Failed to query from database")
-			return
-		}
-		ua.Data["json"] = userList
-
-	} else if ua.userID == ua.currentUserID || ua.IsAdmin {
+	if ua.userID == ua.currentUserID || ua.IsAdmin {
 		userQuery := models.User{UserID: ua.userID}
 		u, err := dao.GetUser(userQuery)
 		if err != nil {
 			log.Errorf("Error occurred in GetUser, error: %v", err)
 			ua.CustomAbort(http.StatusInternalServerError, "Internal error.")
 		}
+		u.Password = ""
 		ua.Data["json"] = u
-	} else {
-		log.Errorf("Current user, id: %d does not have admin role, can not view other user's detail", ua.currentUserID)
+		ua.ServeJSON()
+		return
+	}
+
+	log.Errorf("Current user, id: %d does not have admin role, can not view other user's detail", ua.currentUserID)
+	ua.RenderError(http.StatusForbidden, "User does not have admin role")
+	return
+}
+
+// List ...
+func (ua *UserAPI) List() {
+	if !ua.IsAdmin {
+		log.Errorf("Current user, id: %d does not have admin role, can not list users", ua.currentUserID)
 		ua.RenderError(http.StatusForbidden, "User does not have admin role")
 		return
 	}
+
+	page, size := ua.GetPaginationParams()
+	query := &models.UserQuery{
+		Username: ua.GetString("username"),
+		Email:    ua.GetString("email"),
+		Pagination: &models.Pagination{
+			Page: page,
+			Size: size,
+		},
+	}
+
+	total, err := dao.GetTotalOfUsers(query)
+	if err != nil {
+		ua.HandleInternalServerError(fmt.Sprintf("failed to get total of users: %v", err))
+		return
+	}
+
+	users, err := dao.ListUsers(query)
+	if err != nil {
+		ua.HandleInternalServerError(fmt.Sprintf("failed to get users: %v", err))
+		return
+	}
+
+	ua.SetPaginationHeader(total, page, size)
+	ua.Data["json"] = users
 	ua.ServeJSON()
 }
 
 // Put ...
 func (ua *UserAPI) Put() {
-	ldapAdminUser := (ua.AuthMode == "ldap_auth" && ua.userID == 1 && ua.userID == ua.currentUserID)
-
-	if !(ua.AuthMode == "db_auth" || ldapAdminUser) {
-		ua.CustomAbort(http.StatusForbidden, "")
-	}
-	if !ua.IsAdmin {
-		if ua.userID != ua.currentUserID {
-			log.Warning("Guests can only change their own account.")
-			ua.CustomAbort(http.StatusForbidden, "Guests can only change their own account.")
-		}
+	if !ua.modifiable() {
+		ua.RenderError(http.StatusForbidden, fmt.Sprintf("User with ID %d cannot be modified", ua.userID))
+		return
 	}
 	user := models.User{UserID: ua.userID}
 	ua.DecodeJSONReq(&user)
@@ -189,7 +206,7 @@ func (ua *UserAPI) Put() {
 // Post ...
 func (ua *UserAPI) Post() {
 
-	if !(ua.AuthMode == "db_auth") {
+	if !(ua.AuthMode == common.DBAuth) {
 		ua.CustomAbort(http.StatusForbidden, "")
 	}
 
@@ -237,18 +254,9 @@ func (ua *UserAPI) Post() {
 
 // Delete ...
 func (ua *UserAPI) Delete() {
-	if !ua.IsAdmin {
-		log.Warningf("current user, id: %d does not have admin role, can not remove user", ua.currentUserID)
-		ua.RenderError(http.StatusForbidden, "User does not have admin role")
+	if !ua.IsAdmin || ua.AuthMode != common.DBAuth || ua.userID == 1 || ua.currentUserID == ua.userID {
+		ua.RenderError(http.StatusForbidden, fmt.Sprintf("User with ID: %d cannot be removed, auth mode: %s, current user ID: %d", ua.userID, ua.AuthMode, ua.currentUserID))
 		return
-	}
-
-	if ua.AuthMode == "ldap_auth" {
-		ua.CustomAbort(http.StatusForbidden, "user can not be deleted in LDAP authentication mode")
-	}
-
-	if ua.currentUserID == ua.userID {
-		ua.CustomAbort(http.StatusForbidden, "can not delete yourself")
 	}
 
 	var err error
@@ -262,45 +270,53 @@ func (ua *UserAPI) Delete() {
 
 // ChangePassword handles PUT to /api/users/{}/password
 func (ua *UserAPI) ChangePassword() {
-	ldapAdminUser := (ua.AuthMode == "ldap_auth" && ua.userID == 1 && ua.userID == ua.currentUserID)
-
-	if !(ua.AuthMode == "db_auth" || ldapAdminUser) {
-		ua.CustomAbort(http.StatusForbidden, "")
+	if !ua.modifiable() {
+		ua.RenderError(http.StatusForbidden, fmt.Sprintf("User with ID: %d is not modifiable", ua.userID))
+		return
 	}
 
-	if !ua.IsAdmin {
-		if ua.userID != ua.currentUserID {
-			log.Error("Guests can only change their own account.")
-			ua.CustomAbort(http.StatusForbidden, "Guests can only change their own account.")
-		}
-	}
+	changePwdOfOwn := ua.userID == ua.currentUserID
 
 	var req passwordReq
 	ua.DecodeJSONReq(&req)
-	if req.OldPassword == "" {
-		log.Error("Old password is blank")
-		ua.CustomAbort(http.StatusBadRequest, "Old password is blank")
+
+	if changePwdOfOwn && len(req.OldPassword) == 0 {
+		ua.HandleBadRequest("empty old_password")
+		return
 	}
 
-	queryUser := models.User{UserID: ua.userID, Password: req.OldPassword}
-	user, err := dao.CheckUserPassword(queryUser)
+	if len(req.NewPassword) == 0 {
+		ua.HandleBadRequest("empty new_password")
+		return
+	}
+
+	user, err := dao.GetUser(models.User{UserID: ua.userID})
 	if err != nil {
-		log.Errorf("Error occurred in CheckUserPassword: %v", err)
-		ua.CustomAbort(http.StatusInternalServerError, "Internal error.")
+		ua.HandleInternalServerError(fmt.Sprintf("failed to get user %d: %v", ua.userID, err))
+		return
 	}
 	if user == nil {
-		log.Warning("Password input is not correct")
-		ua.CustomAbort(http.StatusForbidden, "old_password_is_not_correct")
+		ua.HandleNotFound(fmt.Sprintf("user %d not found", ua.userID))
+		return
+	}
+	if changePwdOfOwn {
+		if user.Password != utils.Encrypt(req.OldPassword, user.Salt) {
+			ua.HandleForbidden("incorrect old_password")
+			return
+		}
+	}
+	if user.Password == utils.Encrypt(req.NewPassword, user.Salt) {
+		ua.HandleBadRequest("the new password can not be same with the old one")
+		return
 	}
 
-	if req.NewPassword == "" {
-		ua.CustomAbort(http.StatusBadRequest, "please_input_new_password")
+	updatedUser := models.User{
+		UserID:   ua.userID,
+		Password: req.NewPassword,
 	}
-	updateUser := models.User{UserID: ua.userID, Password: req.NewPassword, Salt: user.Salt}
-	err = dao.ChangeUserPassword(updateUser, req.OldPassword)
-	if err != nil {
-		log.Errorf("Error occurred in ChangeUserPassword: %v", err)
-		ua.CustomAbort(http.StatusInternalServerError, "Internal error.")
+	if err = dao.ChangeUserPassword(updatedUser); err != nil {
+		ua.HandleInternalServerError(fmt.Sprintf("failed to change password of user %d: %v", ua.userID, err))
+		return
 	}
 }
 
@@ -319,6 +335,18 @@ func (ua *UserAPI) ToggleUserAdminRole() {
 	}
 }
 
+// modifiable returns whether the modify is allowed based on current auth mode and context
+func (ua *UserAPI) modifiable() bool {
+	if ua.AuthMode == common.DBAuth {
+		//When the auth mode is local DB, admin can modify anyone, non-admin can modify himself.
+		return ua.IsAdmin || ua.userID == ua.currentUserID
+	}
+	//When the auth mode is external IDM backend, only the super user can modify himself,
+	//because he's the only one whose information is stored in local DB.
+	return ua.userID == 1 && ua.userID == ua.currentUserID
+
+}
+
 // validate only validate when user register
 func validate(user models.User) error {
 
@@ -331,10 +359,7 @@ func validate(user models.User) error {
 	if isIllegalLength(user.Password, 8, 20) {
 		return fmt.Errorf("password with illegal length")
 	}
-	if err := commonValidate(user); err != nil {
-		return err
-	}
-	return nil
+	return commonValidate(user)
 }
 
 //commonValidate validates email, realname, comment information when user register or change their profile
@@ -348,7 +373,7 @@ func commonValidate(user models.User) error {
 		return fmt.Errorf("Email can't be empty")
 	}
 
-	if isIllegalLength(user.Realname, 0, 20) {
+	if isIllegalLength(user.Realname, 1, 255) {
 		return fmt.Errorf("realname with illegal length")
 	}
 

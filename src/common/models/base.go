@@ -26,5 +26,14 @@ func init() {
 		new(Project),
 		new(Role),
 		new(AccessLog),
-		new(RepoRecord))
+		new(ScanJob),
+		new(RepoRecord),
+		new(ImgScanOverview),
+		new(ClairVulnTimestamp),
+		new(WatchItem),
+		new(ProjectMetadata),
+		new(ConfigEntry),
+		new(Label),
+		new(ResourceLabel),
+		new(UserGroup))
 }

@@ -15,9 +15,13 @@ package api
 
 import (
 	"fmt"
+	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"github.com/vmware/harbor/src/common/dao"
+	"github.com/vmware/harbor/src/common/dao/project"
 	"github.com/vmware/harbor/src/common/models"
 )
 
@@ -26,13 +30,12 @@ func TestGetRepos(t *testing.T) {
 	assert := assert.New(t)
 	apiTest := newHarborAPI()
 	projectID := "1"
-	keyword := "hello-world"
-	detail := "true"
+	keyword := "library/hello-world"
 
 	fmt.Println("Testing Repos Get API")
 	//-------------------case 1 : response code = 200------------------------//
 	fmt.Println("case 1 : response code = 200")
-	code, repositories, err := apiTest.GetRepos(*admin, projectID, keyword, detail)
+	code, repositories, err := apiTest.GetRepos(*admin, projectID, keyword)
 	if err != nil {
 		t.Errorf("failed to get repositories: %v", err)
 	} else {
@@ -41,14 +44,14 @@ func TestGetRepos(t *testing.T) {
 			assert.Equal(int(1), len(repos), "the length of repositories should be 1")
 			assert.Equal(repos[0].Name, "library/hello-world", "unexpected repository name")
 		} else {
-			t.Error("the response should return more info as detail is true")
+			t.Error("unexpected reponse")
 		}
 	}
 
 	//-------------------case 2 : response code = 404------------------------//
 	fmt.Println("case 2 : response code = 404:project  not found")
 	projectID = "111"
-	httpStatusCode, _, err := apiTest.GetRepos(*admin, projectID, keyword, detail)
+	httpStatusCode, _, err := apiTest.GetRepos(*admin, projectID, keyword)
 	if err != nil {
 		t.Error("Error whihle get repos by projectID", err.Error())
 		t.Log(err)
@@ -56,27 +59,10 @@ func TestGetRepos(t *testing.T) {
 		assert.Equal(int(404), httpStatusCode, "httpStatusCode should be 404")
 	}
 
-	//-------------------case 3 : response code = 200------------------------//
-	fmt.Println("case 3 : response code = 200")
-	projectID = "1"
-	detail = "false"
-	code, repositories, err = apiTest.GetRepos(*admin, projectID, keyword, detail)
-	if err != nil {
-		t.Errorf("failed to get repositories: %v", err)
-	} else {
-		assert.Equal(int(200), code, "response code should be 200")
-		if repos, ok := repositories.([]string); ok {
-			assert.Equal(int(1), len(repos), "the length of repositories should be 1")
-			assert.Equal(repos[0], "library/hello-world", "unexpected repository name")
-		} else {
-			t.Error("the response should not return detail info as detail is false")
-		}
-	}
-
-	//-------------------case 4 : response code = 400------------------------//
-	fmt.Println("case 4 : response code = 400,invalid project_id")
+	//-------------------case 3 : response code = 400------------------------//
+	fmt.Println("case 3 : response code = 400,invalid project_id")
 	projectID = "ccc"
-	httpStatusCode, _, err = apiTest.GetRepos(*admin, projectID, keyword, detail)
+	httpStatusCode, _, err = apiTest.GetRepos(*admin, projectID, keyword)
 	if err != nil {
 		t.Error("Error whihle get repos by projectID", err.Error())
 		t.Log(err)
@@ -95,8 +81,7 @@ func TestGetReposTags(t *testing.T) {
 	//-------------------case 1 : response code = 404------------------------//
 	fmt.Println("case 1 : response code = 404,repo not found")
 	repository := "errorRepos"
-	detail := "false"
-	code, _, err := apiTest.GetReposTags(*admin, repository, detail)
+	code, _, err := apiTest.GetReposTags(*admin, repository)
 	if err != nil {
 		t.Errorf("failed to get tags of repository %s: %v", repository, err)
 	} else {
@@ -105,35 +90,35 @@ func TestGetReposTags(t *testing.T) {
 	//-------------------case 2 : response code = 200------------------------//
 	fmt.Println("case 2 : response code = 200")
 	repository = "library/hello-world"
-	code, tags, err := apiTest.GetReposTags(*admin, repository, detail)
+	code, tags, err := apiTest.GetReposTags(*admin, repository)
 	if err != nil {
 		t.Errorf("failed to get tags of repository %s: %v", repository, err)
 	} else {
 		assert.Equal(int(200), code, "httpStatusCode should be 200")
-		if tg, ok := tags.([]string); ok {
+		if tg, ok := tags.([]tagResp); ok {
 			assert.Equal(1, len(tg), fmt.Sprintf("there should be only one tag, but now %v", tg))
-			assert.Equal(tg[0], "latest", "the tag should be latest")
+			assert.Equal(tg[0].Name, "latest", "the tag should be latest")
 		} else {
-			t.Error("the tags should be in simple style as the detail is false")
+			t.Error("unexpected response")
 		}
 	}
 
-	//-------------------case 3 : response code = 200------------------------//
-	fmt.Println("case 3 : response code = 200")
+	//-------------------case 3 : response code = 404------------------------//
+	fmt.Println("case 3 : response code = 404")
 	repository = "library/hello-world"
-	detail = "true"
-	code, tags, err = apiTest.GetReposTags(*admin, repository, detail)
-	if err != nil {
-		t.Errorf("failed to get tags of repository %s: %v", repository, err)
-	} else {
-		assert.Equal(int(200), code, "httpStatusCode should be 200")
-		if tg, ok := tags.([]detailedTagResp); ok {
-			assert.Equal(1, len(tg), fmt.Sprintf("there should be only one tag, but now %v", tg))
-			assert.Equal(tg[0].Tag, "latest", "the tag should be latest")
-		} else {
-			t.Error("the tags should be in detail style as the detail is true")
-		}
-	}
+	tag := "not_exist_tag"
+	code, result, err := apiTest.GetTag(*admin, repository, tag)
+	assert.Nil(err)
+	assert.Equal(http.StatusNotFound, code)
+
+	//-------------------case 4 : response code = 200------------------------//
+	fmt.Println("case 4 : response code = 200")
+	repository = "library/hello-world"
+	tag = "latest"
+	code, result, err = apiTest.GetTag(*admin, repository, tag)
+	assert.Nil(err)
+	assert.Equal(http.StatusOK, code)
+	assert.Equal(tag, result.Name)
 
 	fmt.Printf("\n")
 }
@@ -190,49 +175,176 @@ func TestGetReposTop(t *testing.T) {
 	apiTest := newHarborAPI()
 
 	fmt.Println("Testing ReposTop Get API")
-	//-------------------case 1 : response code = 200------------------------//
-	fmt.Println("case 1 : response code = 200")
-	count := "1"
-	detail := "false"
-	code, repos, err := apiTest.GetReposTop(*admin, count, detail)
-	if err != nil {
-		t.Errorf("failed to get the most popular repositories: %v", err)
-	} else {
-		assert.Equal(int(200), code, "response code should be 200")
-		if r, ok := repos.([]*models.TopRepo); ok {
-			assert.Equal(int(1), len(r), "the length should be 1")
-			assert.Equal(r[0].RepoName, "library/docker", "the name of repository should be library/docker")
-		} else {
-			t.Error("the repositories should in simple style as the detail is false")
-		}
-	}
-
-	//-------------------case 2 : response code = 400------------------------//
-	fmt.Println("case 2 : response code = 400,invalid count")
-	count = "cc"
-	code, _, err = apiTest.GetReposTop(*admin, count, detail)
+	//-------------------case 1 : response code = 400------------------------//
+	fmt.Println("case 1 : response code = 400,invalid count")
+	count := "cc"
+	code, _, err := apiTest.GetReposTop(*admin, count)
 	if err != nil {
 		t.Errorf("failed to get the most popular repositories: %v", err)
 	} else {
 		assert.Equal(int(400), code, "response code should be 400")
 	}
 
-	//-------------------case 3 : response code = 200------------------------//
-	fmt.Println("case 3 : response code = 200")
+	//-------------------case 2 : response code = 200------------------------//
+	fmt.Println("case 2 : response code = 200")
 	count = "1"
-	detail = "true"
-	code, repos, err = apiTest.GetReposTop(*admin, count, detail)
+	code, repos, err := apiTest.GetReposTop(*admin, count)
 	if err != nil {
 		t.Errorf("failed to get the most popular repositories: %v", err)
 	} else {
 		assert.Equal(int(200), code, "response code should be 200")
 		if r, ok := repos.([]*repoResp); ok {
 			assert.Equal(int(1), len(r), "the length should be 1")
-			assert.Equal(r[0].Name, "library/docker", "the name of repository should be library/docker")
+			assert.Equal(r[0].Name, "library/busybox", "the name of repository should be library/busybox")
 		} else {
-			t.Error("the repositories should in detail style as the detail is true")
+			t.Error("unexpected response")
 		}
 	}
 
 	fmt.Printf("\n")
+}
+
+func TestPopulateAuthor(t *testing.T) {
+	author := "author"
+	detail := &tagDetail{
+		Author: author,
+	}
+	populateAuthor(detail)
+	assert.Equal(t, author, detail.Author)
+
+	detail = &tagDetail{}
+	populateAuthor(detail)
+	assert.Equal(t, "", detail.Author)
+
+	maintainer := "maintainer"
+	detail = &tagDetail{
+		Config: &cfg{
+			Labels: map[string]string{
+				"Maintainer": maintainer,
+			},
+		},
+	}
+	populateAuthor(detail)
+	assert.Equal(t, maintainer, detail.Author)
+}
+
+func TestPutOfRepository(t *testing.T) {
+	u, err := dao.GetUser(models.User{
+		Username: projAdmin.Name,
+	})
+	if err != nil {
+		t.Errorf("Error occurred when Register user: %v", err)
+	}
+	pmid, err := project.AddProjectMember(
+		models.Member{
+			ProjectID:  1,
+			Role:       1,
+			EntityID:   int(u.UserID),
+			EntityType: "u"},
+	)
+	if err != nil {
+		t.Errorf("Error occurred when add project member: %v", err)
+	}
+	defer project.DeleteProjectMemberByID(pmid)
+
+	base := "/api/repositories/"
+	desc := struct {
+		Description string `json:"description"`
+	}{
+		Description: "description_for_test",
+	}
+
+	cases := []*codeCheckingCase{
+		// 404
+		&codeCheckingCase{
+			request: &testingRequest{
+				method:   http.MethodPut,
+				url:      base + "non_exist_repository",
+				bodyJSON: desc,
+			},
+			code: http.StatusNotFound,
+		},
+		// 401
+		&codeCheckingCase{
+			request: &testingRequest{
+				method:   http.MethodPut,
+				url:      base + "library/hello-world",
+				bodyJSON: desc,
+			},
+			code: http.StatusUnauthorized,
+		},
+		// 403 non-member
+		&codeCheckingCase{
+			request: &testingRequest{
+				method:     http.MethodPut,
+				url:        base + "library/hello-world",
+				bodyJSON:   desc,
+				credential: nonSysAdmin,
+			},
+			code: http.StatusForbidden,
+		},
+		// 403 project guest
+		&codeCheckingCase{
+			request: &testingRequest{
+				method:     http.MethodPut,
+				url:        base + "library/hello-world",
+				bodyJSON:   desc,
+				credential: projGuest,
+			},
+			code: http.StatusForbidden,
+		},
+		// 200 project developer
+		&codeCheckingCase{
+			request: &testingRequest{
+				method:     http.MethodPut,
+				url:        base + "library/hello-world",
+				bodyJSON:   desc,
+				credential: projDeveloper,
+			},
+			code: http.StatusOK,
+		},
+		// 200 project admin
+		&codeCheckingCase{
+			request: &testingRequest{
+				method:     http.MethodPut,
+				url:        base + "library/hello-world",
+				bodyJSON:   desc,
+				credential: projAdmin,
+			},
+			code: http.StatusOK,
+		},
+		// 200 system admin
+		&codeCheckingCase{
+			request: &testingRequest{
+				method:     http.MethodPut,
+				url:        base + "library/hello-world",
+				bodyJSON:   desc,
+				credential: sysAdmin,
+			},
+			code: http.StatusOK,
+		},
+	}
+	runCodeCheckingCases(t, cases...)
+
+	// verify that the description is changed
+	repositories := []*repoResp{}
+	err = handleAndParse(&testingRequest{
+		method: http.MethodGet,
+		url:    base,
+		queryStruct: struct {
+			ProjectID int64 `url:"project_id"`
+		}{
+			ProjectID: 1,
+		},
+	}, &repositories)
+	require.Nil(t, err)
+	var repository *repoResp
+	for _, repo := range repositories {
+		if repo.Name == "library/hello-world" {
+			repository = repo
+			break
+		}
+	}
+	require.NotNil(t, repository)
+	assert.Equal(t, desc.Description, repository.Description)
 }

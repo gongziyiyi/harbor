@@ -17,6 +17,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"reflect"
 
 	"github.com/vmware/harbor/src/common/utils"
 	"github.com/vmware/harbor/src/common/utils/log"
@@ -26,9 +27,14 @@ import (
 
 	"github.com/vmware/harbor/src/common/dao"
 	"github.com/vmware/harbor/src/common/models"
+	"github.com/vmware/harbor/src/common/notifier"
+	"github.com/vmware/harbor/src/common/scheduler"
+	"github.com/vmware/harbor/src/replication/core"
+	_ "github.com/vmware/harbor/src/replication/event"
 	"github.com/vmware/harbor/src/ui/api"
 	_ "github.com/vmware/harbor/src/ui/auth/db"
 	_ "github.com/vmware/harbor/src/ui/auth/ldap"
+	_ "github.com/vmware/harbor/src/ui/auth/uaa"
 	"github.com/vmware/harbor/src/ui/config"
 	"github.com/vmware/harbor/src/ui/filter"
 	"github.com/vmware/harbor/src/ui/proxy"
@@ -85,9 +91,17 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to get database configuration: %v", err)
 	}
-
 	if err := dao.InitDatabase(database); err != nil {
 		log.Fatalf("failed to initialize database: %v", err)
+	}
+	if config.WithClair() {
+		clairDB, err := config.ClairDB()
+		if err != nil {
+			log.Fatalf("failed to load clair database information: %v", err)
+		}
+		if err := dao.InitClairDB(clairDB); err != nil {
+			log.Fatalf("failed to initialize clair database: %v", err)
+		}
 	}
 
 	password, err := config.InitialAdminPassword()
@@ -98,10 +112,42 @@ func main() {
 		log.Error(err)
 	}
 
+	//Enable the policy scheduler here.
+	scheduler.DefaultScheduler.Start()
+
+	//Subscribe the policy change topic.
+	if err = notifier.Subscribe(notifier.ScanAllPolicyTopic, &notifier.ScanPolicyNotificationHandler{}); err != nil {
+		log.Errorf("failed to subscribe scan all policy change topic: %v", err)
+	}
+
+	//Get policy configuration.
+	scanAllPolicy := config.ScanAllPolicy()
+	if scanAllPolicy.Type == notifier.PolicyTypeDaily {
+		dailyTime := 0
+		if t, ok := scanAllPolicy.Parm["daily_time"]; ok {
+			if reflect.TypeOf(t).Kind() == reflect.Int {
+				dailyTime = t.(int)
+			}
+		}
+
+		//Send notification to handle first policy change.
+		if err = notifier.Publish(notifier.ScanAllPolicyTopic,
+			notifier.ScanPolicyNotification{Type: scanAllPolicy.Type, DailyTime: (int64)(dailyTime)}); err != nil {
+			log.Errorf("failed to publish scan all policy topic: %v", err)
+		}
+	}
+
+	if err := core.Init(); err != nil {
+		log.Errorf("failed to initialize the replication controller: %v", err)
+	}
+
+	filter.Init()
 	beego.InsertFilter("/*", beego.BeforeRouter, filter.SecurityFilter)
+	beego.InsertFilter("/*", beego.BeforeRouter, filter.ReadonlyFilter)
+	beego.InsertFilter("/api/*", beego.BeforeRouter, filter.MediaTypeFilter("application/json"))
 
 	initRouters()
-	if err := api.SyncRegistry(); err != nil {
+	if err := api.SyncRegistry(config.GlobalProjectMgr); err != nil {
 		log.Error(err)
 	}
 	log.Info("Init proxy")

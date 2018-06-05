@@ -44,19 +44,25 @@ You can compile the code by one of the three approaches:
 * Get offcial Golang image from docker hub:
 
    ```sh
-      $ docker pull golang:1.7.3
+      $ docker pull golang:1.9.2
    ```
 
 *  Build, install and bring up Harbor without Notary:
 
    ```sh
-      $ make install GOBUILDIMAGE=golang:1.7.3 COMPILETAG=compile_golangimage CLARITYIMAGE=vmware/harbor-clarity-ui-builder:0.8.4
+      $ make install GOBUILDIMAGE=golang:1.9.2 COMPILETAG=compile_golangimage CLARITYIMAGE=vmware/harbor-clarity-ui-builder:1.4.1
    ```
 
 *  Build, install and bring up Harbor with Notary:
 
    ```sh
-      $ make install GOBUILDIMAGE=golang:1.7.3 COMPILETAG=compile_golangimage CLARITYIMAGE=vmware/harbor-clarity-ui-builder:0.8.4 NOTARYFLAG=true
+      $ make install GOBUILDIMAGE=golang:1.9.2 COMPILETAG=compile_golangimage CLARITYIMAGE=vmware/harbor-clarity-ui-builder:1.4.1 NOTARYFLAG=true
+   ```
+
+*  Build, install and bring up Harbor with Clair:
+
+   ```sh
+      $ make install GOBUILDIMAGE=golang:1.9.2 COMPILETAG=compile_golangimage CLARITYIMAGE=vmware/harbor-clarity-ui-builder:1.4.1 CLAIRFLAG=true
    ```
 
 #### II. Compile code with your own Golang environment, then build Harbor
@@ -69,20 +75,20 @@ You can compile the code by one of the three approaches:
       $ mv harbor $GOPATH/src/github.com/vmware/.
    ```
 
-*  Build, install and run Harbor without Notary:
+*  Build, install and run Harbor without Notary and Clair:
 
    ```sh
       $ cd $GOPATH/src/github.com/vmware/harbor
       $ make install
    ```
 
-*  Build, install and run Harbor with Notary:
+*  Build, install and run Harbor with Notary and Clair:
 
    ```sh
       $ cd $GOPATH/src/github.com/vmware/harbor
-      $ make install -e NOTARYFLAG=true
+      $ make install -e NOTARYFLAG=true CLAIRFLAG=true
    ```   
-
+ 
 ### Verify your installation
 
 If everything worked properly, you can get the below message:
@@ -106,11 +112,14 @@ CLARITYIMAGE       | Clarity UI builder image, default: harbor-clarity-ui-builde
 DEVFLAG            | Build model flag, default: dev
 COMPILETAG         | Compile model flag, default: compile_normal (local golang build)
 NOTARYFLAG         | Notary mode flag, default: false
+CLAIRFLAG          | Clair mode flag, default: false
 HTTPPROXY          | NPM http proxy for Clarity UI builder
 REGISTRYSERVER     | Remote registry server IP address
 REGISTRYUSER       | Remote registry server user name
 REGISTRYPASSWORD   | Remote registry server user password
 REGISTRYPROJECTNAME| Project name on remote registry server
+VERSIONTAG         | Harbor images tag, default: dev
+PKGVERSIONTAG      | Harbor online and offline version tag, default:dev
 
 * Predefined targets:
 

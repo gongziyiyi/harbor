@@ -14,22 +14,27 @@
 import { Component, Input, ViewChild } from '@angular/core';
 import { NgForm } from '@angular/forms';
 
-import { Configuration } from '../config';
+import { Configuration } from 'harbor-ui';
 
 @Component({
     selector: 'config-email',
     templateUrl: "config-email.component.html",
-    styleUrls: ['../config.component.css']
+    styleUrls: ['./config-email.component.scss', '../config.component.scss']
 })
 export class ConfigurationEmailComponent {
+    // tslint:disable-next-line:no-input-rename
     @Input("mailConfig") currentConfig: Configuration = new Configuration();
-    
+
     @ViewChild("mailConfigFrom") mailForm: NgForm;
 
     constructor() { }
 
     disabled(prop: any): boolean {
         return !(prop && prop.editable);
+    }
+
+    setInsecureValue($event: any) {
+        this.currentConfig.email_insecure.value = !$event;
     }
 
     public isValid(): boolean {

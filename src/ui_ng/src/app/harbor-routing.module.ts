@@ -12,41 +12,40 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 import { NgModule } from '@angular/core';
-
 import { RouterModule, Routes } from '@angular/router';
 
-import { SignInComponent } from './account/sign-in/sign-in.component';
-import { HarborShellComponent } from './base/harbor-shell/harbor-shell.component';
-import { ProjectComponent } from './project/project.component';
-import { UserComponent } from './user/user.component';
-import { ReplicationManagementComponent } from './replication/replication-management/replication-management.component';
-
-import { TotalReplicationComponent } from './replication/total-replication/total-replication.component';
-import { DestinationComponent } from './replication/destination/destination.component';
-
-import { ProjectDetailComponent } from './project/project-detail/project-detail.component';
-
-import { RepositoryComponent } from './repository/repository.component';
-import { TagRepositoryComponent } from './repository/tag-repository/tag-repository.component';
-import { ReplicationComponent } from './replication/replication.component';
-import { MemberComponent } from './project/member/member.component';
-import { AuditLogComponent } from './log/audit-log.component';
-
-import { ProjectRoutingResolver } from './project/project-routing-resolver.service';
 import { SystemAdminGuard } from './shared/route/system-admin-activate.service';
-import { SignUpComponent } from './account/sign-up/sign-up.component';
-import { ResetPasswordComponent } from './account/password/reset-password.component';
-import { RecentLogComponent } from './log/recent-log.component';
-import { ConfigurationComponent } from './config/config.component';
-import { PageNotFoundComponent } from './shared/not-found/not-found.component'
-import { StartPageComponent } from './base/start-page/start.component';
-import { SignUpPageComponent } from './account/sign-up/sign-up-page.component';
-
 import { AuthCheckGuard } from './shared/route/auth-user-activate.service';
 import { SignInGuard } from './shared/route/sign-in-guard-activate.service';
 import { LeavingConfigRouteDeactivate } from './shared/route/leaving-config-deactivate.service';
-
 import { MemberGuard } from './shared/route/member-guard-activate.service';
+
+import { PageNotFoundComponent } from './shared/not-found/not-found.component';
+import { HarborShellComponent } from './base/harbor-shell/harbor-shell.component';
+import { ConfigurationComponent } from './config/config.component';
+
+import { UserComponent } from './user/user.component';
+import { SignInComponent } from './account/sign-in/sign-in.component';
+import { ResetPasswordComponent } from './account/password-setting/reset-password/reset-password.component';
+
+import { TotalReplicationPageComponent } from './replication/total-replication/total-replication-page.component';
+import { DestinationPageComponent } from './replication/destination/destination-page.component';
+import { ReplicationPageComponent } from './replication/replication-page.component';
+
+import { AuditLogComponent } from './log/audit-log.component';
+import { LogPageComponent } from './log/log-page.component';
+
+import { RepositoryPageComponent } from './repository/repository-page.component';
+import { TagRepositoryComponent } from './repository/tag-repository/tag-repository.component';
+import { TagDetailPageComponent } from './repository/tag-detail/tag-detail-page.component';
+import { LeavingRepositoryRouteDeactivate } from './shared/route/leaving-repository-deactivate.service';
+
+import { ProjectComponent } from './project/project.component';
+import { ProjectDetailComponent } from './project/project-detail/project-detail.component';
+import { MemberComponent } from './project/member/member.component';
+import {ProjectLabelComponent} from "./project/project-label/project-label.component";
+import { ProjectConfigComponent } from './project/project-config/project-config.component';
+import { ProjectRoutingResolver } from './project/project-routing-resolver.service';
 
 const harborRoutes: Routes = [
   { path: '', redirectTo: 'harbor', pathMatch: 'full' },
@@ -68,7 +67,7 @@ const harborRoutes: Routes = [
       },
       {
         path: 'logs',
-        component: RecentLogComponent
+        component: LogPageComponent
       },
       {
         path: 'users',
@@ -76,20 +75,15 @@ const harborRoutes: Routes = [
         canActivate: [SystemAdminGuard]
       },
       {
+        path: 'registries',
+        component: DestinationPageComponent,
+        canActivate: [SystemAdminGuard]
+      },
+      {
         path: 'replications',
-        component: ReplicationManagementComponent,
+        component: TotalReplicationPageComponent,
         canActivate: [SystemAdminGuard],
         canActivateChild: [SystemAdminGuard],
-        children: [
-          {
-            path: 'rules',
-            component: TotalReplicationComponent
-          },
-          {
-            path: 'endpoints',
-            component: DestinationComponent
-          }
-        ]
       },
       {
         path: 'tags/:id/:repo',
@@ -100,6 +94,23 @@ const harborRoutes: Routes = [
         }
       },
       {
+        path: 'projects/:id/repositories/:repo',
+        component: TagRepositoryComponent,
+        canActivate: [MemberGuard],
+        canDeactivate: [LeavingRepositoryRouteDeactivate],
+        resolve: {
+          projectResolver: ProjectRoutingResolver
+        }
+      },
+      {
+        path: 'projects/:id/repositories/:repo/tags/:tag',
+        component: TagDetailPageComponent,
+        canActivate: [MemberGuard],
+        resolve: {
+          projectResolver: ProjectRoutingResolver
+        },
+      },
+      {
         path: 'projects/:id',
         component: ProjectDetailComponent,
         canActivate: [MemberGuard],
@@ -108,21 +119,32 @@ const harborRoutes: Routes = [
         },
         children: [
           {
-            path: 'repository',
-            component: RepositoryComponent
+            path: 'repositories',
+            component: RepositoryPageComponent
           },
           {
-            path: 'replication',
-            component: ReplicationComponent,
-            canActivate: [SystemAdminGuard]
+            path: 'repositories/:repo/tags',
+            component: TagRepositoryComponent,
           },
           {
-            path: 'member',
+            path: 'replications',
+            component: ReplicationPageComponent,
+          },
+          {
+            path: 'members',
             component: MemberComponent
           },
           {
-            path: 'log',
+            path: 'logs',
             component: AuditLogComponent
+          },
+          {
+            path: 'labels',
+            component: ProjectLabelComponent
+          },
+          {
+            path: 'configs',
+            component: ProjectConfigComponent
           }
         ]
       },
@@ -131,6 +153,12 @@ const harborRoutes: Routes = [
         component: ConfigurationComponent,
         canActivate: [SystemAdminGuard],
         canDeactivate: [LeavingConfigRouteDeactivate]
+      },
+      {
+        path: 'registry',
+        component: DestinationPageComponent,
+        canActivate: [SystemAdminGuard],
+        canActivateChild: [SystemAdminGuard],
       }
     ]
   },

@@ -47,15 +47,6 @@ func GetRepositoryByName(name string) (*models.RepoRecord, error) {
 	return &r, err
 }
 
-// GetAllRepositories ...
-func GetAllRepositories() ([]models.RepoRecord, error) {
-	o := GetOrmer()
-	var repos []models.RepoRecord
-	_, err := o.QueryTable("repository").
-		OrderBy("Name").All(&repos)
-	return repos, err
-}
-
 // DeleteRepository ...
 func DeleteRepository(name string) error {
 	o := GetOrmer()
@@ -79,10 +70,13 @@ func IncreasePullCount(name string) (err error) {
 			"pull_count":  orm.ColValue(orm.ColAdd, 1),
 			"update_time": time.Now(),
 		})
-	if num == 0 {
-		err = fmt.Errorf("Failed to increase repository pull count with name: %s %s", name, err.Error())
+	if err != nil {
+		return err
 	}
-	return err
+	if num == 0 {
+		return fmt.Errorf("Failed to increase repository pull count with name: %s", name)
+	}
+	return nil
 }
 
 //RepositoryExists returns whether the repository exists according to its name.
@@ -91,120 +85,96 @@ func RepositoryExists(name string) bool {
 	return o.QueryTable("repository").Filter("name", name).Exist()
 }
 
-// GetRepositoryByProjectName ...
-func GetRepositoryByProjectName(name string) ([]*models.RepoRecord, error) {
-	sql := `select * from repository 
-		where project_id = (
-			select project_id from project
-			where name = ?
-		)`
-	repos := []*models.RepoRecord{}
-	_, err := GetOrmer().Raw(sql, name).QueryRows(&repos)
-	return repos, err
-}
-
-//GetTopRepos returns the most popular repositories
-func GetTopRepos(userID int, count int) ([]*models.RepoRecord, error) {
-	sql :=
-		`select r.repository_id, r.name,
-			r.project_id, r.description, r.pull_count, 
-			r.star_count, r.creation_time, r.update_time
-		from repository r
-		inner join project p on r.project_id = p.project_id
-		where (
-			p.deleted = 0 and (
-				p.public = 1 or (
-					? <> ? and (
-						exists (
-							select 1 from user u
-							where u.user_id = ? and u.sysadmin_flag = 1
-						) or exists (
-							select 1 from project_member pm
-							where pm.project_id = p.project_id and pm.user_id = ?
-		)))))
-		order by r.pull_count desc, r.name limit ?`
+//GetTopRepos returns the most popular repositories whose project ID is
+// in projectIDs
+func GetTopRepos(projectIDs []int64, n int) ([]*models.RepoRecord, error) {
 	repositories := []*models.RepoRecord{}
-	_, err := GetOrmer().Raw(sql, userID, NonExistUserID, userID, userID, count).QueryRows(&repositories)
+	if len(projectIDs) == 0 {
+		return repositories, nil
+	}
+
+	_, err := GetOrmer().QueryTable(&models.RepoRecord{}).
+		Filter("project_id__in", projectIDs).
+		OrderBy("-pull_count").
+		Limit(n).
+		All(&repositories)
 
 	return repositories, err
 }
 
 // GetTotalOfRepositories ...
-func GetTotalOfRepositories(name string) (int64, error) {
-	qs := GetOrmer().QueryTable(&models.RepoRecord{})
-	if len(name) != 0 {
-		qs = qs.Filter("Name__contains", name)
-	}
-	return qs.Count()
-}
-
-// GetTotalOfPublicRepositories ...
-func GetTotalOfPublicRepositories(name string) (int64, error) {
-	params := []interface{}{}
-	sql := `select count(*) from repository r 
-		join project p 
-		on r.project_id = p.project_id and p.public = 1 `
-	if len(name) != 0 {
-		sql += ` where r.name like ?`
-		params = append(params, "%"+escape(name)+"%")
-	}
-
+func GetTotalOfRepositories(query ...*models.RepositoryQuery) (int64, error) {
+	sql, params := repositoryQueryConditions(query...)
+	sql = `select count(*) ` + sql
 	var total int64
-	err := GetOrmer().Raw(sql, params).QueryRow(&total)
-	return total, err
-}
-
-// GetTotalOfUserRelevantRepositories ...
-func GetTotalOfUserRelevantRepositories(userID int, name string) (int64, error) {
-	params := []interface{}{}
-	sql := `select count(*) 
-		from repository r 
-		join (
-			select p.project_id, p.public 
-				from project p
-				join project_member pm
-				on p.project_id = pm.project_id
-				where pm.user_id = ?
-		) as pp 
-		on r.project_id = pp.project_id `
-	params = append(params, userID)
-	if len(name) != 0 {
-		sql += ` where r.name like ?`
-		params = append(params, "%"+escape(name)+"%")
+	if err := GetOrmer().Raw(sql, params).QueryRow(&total); err != nil {
+		return 0, err
 	}
-
-	var total int64
-	err := GetOrmer().Raw(sql, params).QueryRow(&total)
-	return total, err
+	return total, nil
 }
 
-// GetTotalOfRepositoriesByProject ...
-func GetTotalOfRepositoriesByProject(projectID int64, name string) (int64, error) {
-	qs := GetOrmer().QueryTable(&models.RepoRecord{}).
-		Filter("ProjectID", projectID)
-
-	if len(name) != 0 {
-		qs = qs.Filter("Name__contains", name)
-	}
-
-	return qs.Count()
-}
-
-// GetRepositoriesByProject ...
-func GetRepositoriesByProject(projectID int64, name string,
-	limit, offset int64) ([]*models.RepoRecord, error) {
-
+// GetRepositories ...
+func GetRepositories(query ...*models.RepositoryQuery) ([]*models.RepoRecord, error) {
 	repositories := []*models.RepoRecord{}
 
-	qs := GetOrmer().QueryTable(&models.RepoRecord{}).
-		Filter("ProjectID", projectID)
-
-	if len(name) != 0 {
-		qs = qs.Filter("Name__contains", name)
+	sql, params := repositoryQueryConditions(query...)
+	sql = `select r.repository_id, r.name, r.project_id, r.description, r.pull_count, 
+	r.star_count, r.creation_time, r.update_time ` + sql + `order by r.name `
+	if len(query) > 0 && query[0] != nil {
+		page, size := query[0].Page, query[0].Size
+		if size > 0 {
+			sql += `limit ? `
+			params = append(params, size)
+			if page > 0 {
+				sql += `offset ? `
+				params = append(params, size*(page-1))
+			}
+		}
 	}
 
-	_, err := qs.Limit(limit).
-		Offset(offset).All(&repositories)
+	if _, err := GetOrmer().Raw(sql, params).QueryRows(&repositories); err != nil {
+		return nil, err
+	}
 
-	return repositories, err
+	return repositories, nil
+}
+
+func repositoryQueryConditions(query ...*models.RepositoryQuery) (string, []interface{}) {
+	params := []interface{}{}
+	sql := `from repository r `
+	if len(query) == 0 || query[0] == nil {
+		return sql, params
+	}
+	q := query[0]
+
+	if q.LabelID > 0 {
+		sql += `join harbor_resource_label rl on r.repository_id = rl.resource_id 
+		and rl.resource_type = 'r' `
+	}
+	sql += `where 1=1 `
+
+	if len(q.Name) > 0 {
+		sql += `and r.name like ? `
+		params = append(params, "%"+Escape(q.Name)+"%")
+	}
+
+	if len(q.ProjectIDs) > 0 {
+		sql += fmt.Sprintf(`and r.project_id in ( %s ) `,
+			paramPlaceholder(len(q.ProjectIDs)))
+		params = append(params, q.ProjectIDs)
+	}
+
+	if len(q.ProjectName) > 0 {
+		// use "like" rather than "table joining" because that
+		// in integration mode the projects are saved in Admiral side
+		sql += `and r.name like ? `
+		params = append(params, q.ProjectName+"/%")
+	}
+
+	if q.LabelID > 0 {
+		sql += `and rl.label_id = ? `
+		params = append(params, q.LabelID)
+	}
+
+	return sql, params
 }

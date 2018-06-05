@@ -25,17 +25,10 @@ import (
 	"github.com/vmware/harbor/src/common/utils/test"
 )
 
-func TestNewRegistryWithModifiers(t *testing.T) {
-	_, err := NewRegistryWithModifiers("http://registry.org", false, nil)
-	if err != nil {
-		t.Errorf("fail to crearte client of registry: %v", err)
-	}
-}
-
 func TestPing(t *testing.T) {
 	server := test.NewServer(
 		&test.RequestHandlerMapping{
-			Method:  "GET",
+			Method:  http.MethodHead,
 			Pattern: "/v2/",
 			Handler: test.Handler(nil),
 		})

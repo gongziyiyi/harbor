@@ -19,12 +19,12 @@ import { TranslateService } from '@ngx-translate/core';
 import { Message } from './message';
 import { MessageService } from './message.service';
 
-import { AlertType, dismissInterval, httpStatusCode, CommonRoutes } from '../shared/shared.const';
+import { dismissInterval, httpStatusCode, CommonRoutes } from '../shared/shared.const';
 
 @Component({
   selector: 'global-message',
   templateUrl: 'message.component.html',
-  styleUrls: ['message.component.css']
+  styleUrls: ['message.component.scss']
 })
 export class MessageComponent implements OnInit, OnDestroy {
 
@@ -33,7 +33,6 @@ export class MessageComponent implements OnInit, OnDestroy {
   globalMessageOpened: boolean;
   messageText: string = "";
   timer: any = null;
-  hideOuter: boolean = true;
 
   appLevelMsgSub: Subscription;
   msgSub: Subscription;
@@ -46,7 +45,7 @@ export class MessageComponent implements OnInit, OnDestroy {
     private translate: TranslateService) { }
 
   ngOnInit(): void {
-    //Only subscribe application level message
+    // Only subscribe application level message
     if (this.isAppLevel) {
       this.appLevelMsgSub = this.messageService.appLevelAnnounced$.subscribe(
         message => {
@@ -56,9 +55,9 @@ export class MessageComponent implements OnInit, OnDestroy {
 
           this.translateMessage(message);
         }
-      )
+      );
     } else {
-      //Only subscribe general messages
+      // Only subscribe general messages
       this.msgSub = this.messageService.messageAnnounced$.subscribe(
         message => {
           this.globalMessageOpened = true;
@@ -68,10 +67,10 @@ export class MessageComponent implements OnInit, OnDestroy {
           this.translateMessage(message);
 
           // Make the message alert bar dismiss after several intervals.
-          //Only for this case
+          // Only for this case
           this.timer = setTimeout(() => this.onClose(), dismissInterval);
 
-          //Hack the Clarity Alert style with native dom
+          // Hack the Clarity Alert style with native dom
           setTimeout(() => {
             let nativeDom: any = this.elementRef.nativeElement;
             let queryDoms: any[] = nativeDom.getElementsByClassName("alert");
@@ -79,8 +78,6 @@ export class MessageComponent implements OnInit, OnDestroy {
               let hackDom: any = queryDoms[0];
               hackDom.className += ' alert-global alert-global-align';
             }
-
-            this.hideOuter = false;
           }, 0);
 
         }
@@ -106,7 +103,7 @@ export class MessageComponent implements OnInit, OnDestroy {
     }
   }
 
-  //Translate or refactor the message shown to user
+  // Translate or refactor the message shown to user
   translateMessage(msg: Message): void {
     let key = "UNKNOWN_ERROR", param = "";
     if (msg && msg.message) {
@@ -124,7 +121,7 @@ export class MessageComponent implements OnInit, OnDestroy {
       this.globalMessage.statusCode === httpStatusCode.Unauthorized : false;
   }
 
-  //Show message text
+  // Show message text
   public get message(): string {
     return this.messageText;
   }
@@ -138,6 +135,5 @@ export class MessageComponent implements OnInit, OnDestroy {
       clearTimeout(this.timer);
     }
     this.globalMessageOpened = false;
-    this.hideOuter = true;
   }
 }

@@ -60,8 +60,8 @@ func TestPutConfig(t *testing.T) {
 	assert := assert.New(t)
 	apiTest := newHarborAPI()
 
-	cfg := map[string]string{
-		common.VerifyRemoteCert: "0",
+	cfg := map[string]interface{}{
+		common.TokenExpiration: 60,
 	}
 
 	code, err := apiTest.PutConfig(*admin, cfg)
@@ -104,13 +104,13 @@ func TestResetConfig(t *testing.T) {
 		return
 	}
 
-	value, ok := cfgs[common.VerifyRemoteCert]
+	value, ok := cfgs[common.TokenExpiration]
 	if !ok {
-		t.Errorf("%s not found", common.VerifyRemoteCert)
+		t.Errorf("%s not found", common.TokenExpiration)
 		return
 	}
 
-	assert.Equal(value.Value.(bool), true, "unexpected value")
+	assert.Equal(int(value.Value.(float64)), 30, "unexpected 30")
 
 	ccc, err := config.GetSystemCfg()
 	if err != nil {

@@ -1,10 +1,11 @@
 # Installation and Configuration Guide
-Harbor can be installed by one of two approaches: 
+Harbor can be installed by one of three approaches: 
 
 - **Online installer:** The installer downloads Harbor's images from Docker hub. For this reason, the installer is very small in size.
 
 - **Offline installer:** Use this installer when the host does not have an Internet connection. The installer contains pre-built images so its size is larger.
 
+- **OVA installer:** Use this installer when user have a vCenter environment, Harbor is launched after OVA deployed. Detail information please refer **[Harbor OVA install guide](install_guide_ova.md)**
 
 All installers can be downloaded from the **[official release](https://github.com/vmware/harbor/releases)** page. 
 
@@ -16,9 +17,25 @@ In addition, the deployment instructions on Kubernetes has been created by the c
 
 ## Prerequisites for the target host
 Harbor is deployed as several Docker containers, and, therefore, can be deployed on any Linux distribution that supports Docker. The target host requires Python, Docker, and Docker Compose to be installed.  
-* Python should be version 2.7 or higher.  Note that you may have to install Python on Linux distributions (Gentoo, Arch) that do not come with a Python interpreter installed by default  
-* Docker engine should be version 1.10 or higher.  For installation instructions, please refer to: https://docs.docker.com/engine/installation/
-* Docker Compose needs to be version 1.6.0 or higher.  For installation instructions, please refer to: https://docs.docker.com/compose/install/
+### Hardware
+|Resource|Capacity|Description|
+|---|---|---|
+|CPU|minimal 2 CPU|4 CPU is prefered|
+|Mem|minimal 4GB|8GB is prefered|
+|Disk|minimal 40GB|160GB is prefered|
+### Software
+|Software|Version|Description|
+|---|---|---|
+|Python|version 2.7 or higher|Note that you may have to install Python on Linux distributions (Gentoo, Arch) that do not come with a Python interpreter installed by default|
+|Docker engine|version 1.10 or higher|For installation instructions, please refer to: https://docs.docker.com/engine/installation/|
+|Docker Compose|version 1.6.0 or higher|For installation instructions, please refer to: https://docs.docker.com/compose/install/|
+|Openssl|latest is prefered|Generate certificate and keys for Harbor|
+### Network ports 
+|Port|Protocol|Description|
+|---|---|---|
+|443|HTTPS|Harbor UI and API will accept requests on this port for https protocol|
+|4443|HTTS|Connections to the Docker Content Trust service for Harbor, only needed when Notary is enabled|
+|80|HTTP|Harbor UI and API will accept requests on this port for http protocol|
 
 ## Installation Steps
 
@@ -46,10 +63,10 @@ Offline installer:
 Configuration parameters are located in the file **harbor.cfg**. 
 
 There are two categories of parameters in harbor.cfg, **required parameters** and **optional parameters**.  
+
 * **required parameters**: These parameters are required to be set in the configuration file. They will take effect if a user updates them in ```harbor.cfg``` and run the ```install.sh``` script to reinstall Harbor.
-* **optional parameters**: These parameters are optional. If they are set in ```harbor.cfg```, they only take effect in the first launch of Harbor. 
+* **optional parameters**: These parameters are optional for updating, i.e. user can leave them as default and update them on Web UI after Harbor is started.  If they are set in ```harbor.cfg```, they only take effect in the first launch of Harbor. 
 Subsequent update to these parameters in ```harbor.cfg``` will be ignored. 
-The user can leave them blank and update them on Web UI after Harbor is started.  
 
     **Note:** If you choose to set these parameters via the UI, be sure to do so right after Harbor
 is started. In particular, you must set the desired **auth_mode** before registering or creating any new users in Harbor. When there are users in the system (besides the default admin user), 
@@ -67,15 +84,19 @@ The parameters are described below - note that at the very least, you will need 
 * **ssl_cert**: The path of SSL certificate, it's applied only when the protocol is set to https
 * **ssl_cert_key**: The path of SSL key, it's applied only when the protocol is set to https 
 * **secretkey_path**: The path of key for encrypt or decrypt the password of a remote registry in a replication policy.
+* **log_rotate_count**: Log files are rotated **log_rotate_count** times before being removed. If count is 0, old versions are removed rather than rotated.
+* **log_rotate_size**: Log files are rotated only if they grow bigger than **log_rotate_size** bytes. If size is followed by k, the size is assumed to be in kilobytes. If the M is used, the size is in megabytes, and if G is used, the size is in gigabytes. So size 100, size 100k, size 100M and size 100G are all valid.
 
 ##### Optional parameters
-* **Email settings**: These parameters are needed for Harbor to be able to send a user a "password reset" email, and are only necessary if that functionality is needed.  Also, do note that by default SSL connectivity is _not_ enabled - if your SMTP server requires SSL, but does _not_ support STARTTLS, then you should enable SSL by setting **email_ssl = true**.
+* **Email settings**: These parameters are needed for Harbor to be able to send a user a "password reset" email, and are only necessary if that functionality is needed.  Also, do note that by default SSL connectivity is _not_ enabled - if your SMTP server requires SSL, but does _not_ support STARTTLS, then you should enable SSL by setting **email_ssl = true**. Setting **email_insecure = true** if the email server uses a self-signed or untrusted certificate. For a detailed description about "email_identity" please refer to [rfc2595](https://tools.ietf.org/rfc/rfc2595.txt)
   * email_server = smtp.mydomain.com 
   * email_server_port = 25
+  * email_identity = 
   * email_username = sample_admin@mydomain.com
   * email_password = abc
   * email_from = admin <sample_admin@mydomain.com>  
   * email_ssl = false
+  * email_insecure = false
 
 * **harbor_admin_password**: The administrator's initial password. This password only takes effect for the first time Harbor launches. After that, this setting is ignored and the administrator's password should be set in the UI. _Note that the default username/password are **admin/Harbor12345** ._   
 * **auth_mode**: The type of authentication that is used. By default, it is **db_auth**, i.e. the credentials are stored in a database. 
@@ -89,16 +110,15 @@ may not be able to log in after the upgrade.
 * **ldap_basedn**: The base DN to look up a user, e.g. `ou=people,dc=mydomain,dc=com`.  _Only used when **auth_mode** is set to *ldap_auth* ._ 
 * **ldap_filter**:The search filter for looking up a user, e.g. `(objectClass=person)`.
 * **ldap_uid**: The attribute used to match a user during a LDAP search, it could be uid, cn, email or other attributes.
-* **ldap_scope**: The scope to search for a user, 1-LDAP_SCOPE_BASE, 2-LDAP_SCOPE_ONELEVEL, 3-LDAP_SCOPE_SUBTREE. Default is 3. 
+* **ldap_scope**: The scope to search for a user, 0-LDAP_SCOPE_BASE, 1-LDAP_SCOPE_ONELEVEL, 2-LDAP_SCOPE_SUBTREE. Default is 2. 
 * **self_registration**: (**on** or **off**. Default is **on**) Enable / Disable the ability for a user to register himself/herself. When disabled, new users can only be created by the Admin user, only an admin user can create new users in Harbor.  _NOTE: When **auth_mode** is set to **ldap_auth**, self-registration feature is **always** disabled, and this flag is ignored._  
 * **token_expiration**: The expiration time (in minutes) of a token created by token service, default is 30 minutes.
 * **project_creation_restriction**: The flag to control what users have permission to create projects.  By default everyone can create a project, set to "adminonly" such that only admin can create project.
-* **verify_remote_cert**: (**on** or **off**.  Default is **on**) This flag determines whether or not to verify SSL/TLS certificate when Harbor communicates with a remote registry instance. Setting this attribute to **off** bypasses the SSL/TLS verification, which is often used when the remote instance has a self-signed or untrusted certificate.
 
 #### Configuring storage backend (optional)
 
 By default, Harbor stores images on your local filesystem. In a production environment, you may consider 
-using other storage backend instead of the local filesystem, like S3, Openstack Swift, Ceph, etc. 
+using other storage backend instead of the local filesystem, like S3, OpenStack Swift, Ceph, etc. 
 What you need to update is the section of `storage` in the file `common/templates/registry/config.yml`. 
 For example, if you use Openstack Swift as your storage backend, the section may look like this:
 
@@ -120,8 +140,8 @@ _NOTE: For detailed information on storage backend of a registry, refer to [Regi
 #### Finishing installation and starting Harbor
 Once **harbor.cfg** and storage backend (optional) are configured, install and start Harbor using the ```install.sh``` script.  Note that it may take some time for the online installer to download Harbor images from Docker hub.  
 
-##### Default installation (without Notary)
-After version 1.1.0, Harbor has integrated with Notary, but by default the installation does not include Notary service.
+##### Default installation (without Notary/Clair)
+Harbor has integrated with Notary and Clair (for vulnerability scanning). However, the default installation does not include Notary or Clair service.
 
 ```sh
     $ sudo ./install.sh
@@ -145,6 +165,20 @@ To install Harbor with Notary service, add a parameter when you run ```install.s
 
 More information about Notary and Docker Content Trust, please refer to Docker's documentation: 
 https://docs.docker.com/engine/security/trust/content_trust/
+
+##### Installation with Clair
+To install Harbor with Clair service, add a parameter when you run ```install.sh```:
+```sh
+    $ sudo ./install.sh --with-clair
+```
+
+For more information about Clair, please refer to Clair's documentation: 
+https://coreos.com/clair/docs/2.0.1/
+
+**Note**: If you want to install both Notary and Clair, you must specify both parameters in the same command:
+```sh
+    $ sudo ./install.sh --with-notary --with-clair
+```
 
 For information on how to use Harbor, please refer to **[User Guide of Harbor](user_guide.md)** .
 
@@ -207,6 +241,30 @@ $ sudo docker-compose -f ./docker-compose.yml -f ./docker-compose.notary.yml dow
 $ vim harbor.cfg
 $ sudo prepare --with-notary
 $ sudo docker-compose -f ./docker-compose.yml -f ./docker-compose.notary.yml up -d
+```
+
+#### _Managing lifecycle of Harbor when it's installed with Clair_ 
+
+When Harbor is installed with Clair, an extra template file ```docker-compose.clair.yml``` is needed for docker-compose commands. The docker-compose commands to manage the lifecycle of Harbor are:
+```
+$ sudo docker-compose -f ./docker-compose.yml -f ./docker-compose.clair.yml [ up|down|ps|stop|start ]
+```
+For example, if you want to change configuration in ```harbor.cfg``` and re-deploy Harbor when it's installed with Clair, the following commands should be used:
+```sh
+$ sudo docker-compose -f ./docker-compose.yml -f ./docker-compose.clair.yml down -v
+$ vim harbor.cfg
+$ sudo prepare --with-clair
+$ sudo docker-compose -f ./docker-compose.yml -f ./docker-compose.clair.yml up -d
+```
+
+#### _Managing lifecycle of Harbor when it's installed with Notary and Clair_ 
+
+If you have installed Notary and Clair, you should include both components in the docker-compose and prepare commands:
+```sh
+$ sudo docker-compose -f ./docker-compose.yml -f ./docker-compose.notary.yml -f ./docker-compose.clair.yml down -v
+$ vim harbor.cfg
+$ sudo prepare --with-notary --with-clair
+$ sudo docker-compose -f ./docker-compose.yml -f ./docker-compose.notary.yml -f ./docker-compose.clair.yml up -d
 ```
 
 Please check the [Docker Compose command-line reference](https://docs.docker.com/compose/reference/) for more on docker-compose.
@@ -286,6 +344,9 @@ hostname = 192.168.0.2:8888
 
 4.Re-deploy Harbor refering to previous section "Managing Harbor's lifecycle". 
 
+
+## Performance tuning
+By default, Harbor limits the CPU usage of Clair container to 150000 and avoids its using up all the CPU resources. This is defined in the docker-compose.clair.yml file. You can modify it based on your hardware configuration.
 
 ## Troubleshooting
 1. When Harbor does not work properly, run the below commands to find out if all containers of Harbor are in **UP** status: 

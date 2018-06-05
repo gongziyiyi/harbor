@@ -25,8 +25,12 @@ import (
 	"github.com/vmware/harbor/src/common/utils/log"
 )
 
-// NonExistUserID : if a user does not exist, the ID of the user will be 0.
-const NonExistUserID = 0
+const (
+	// NonExistUserID : if a user does not exist, the ID of the user will be 0.
+	NonExistUserID = 0
+	// ClairDBAlias ...
+	ClairDBAlias = "clair-db"
+)
 
 // Database is an interface of different databases
 type Database interface {
@@ -36,6 +40,24 @@ type Database interface {
 	String() string
 	// Register registers the database which will be used
 	Register(alias ...string) error
+}
+
+// InitClairDB ...
+func InitClairDB(clairDB *models.PostGreSQL) error {
+	//Except for password other information will not be configurable, so keep it hard coded for 1.2.0.
+	p := &pgsql{
+		host:     clairDB.Host,
+		port:     strconv.Itoa(clairDB.Port),
+		usr:      clairDB.Username,
+		pwd:      clairDB.Password,
+		database: clairDB.Database,
+		sslmode:  false,
+	}
+	if err := p.Register(ClairDBAlias); err != nil {
+		return err
+	}
+	log.Info("initialized clair database")
+	return nil
 }
 
 // InitDatabase initializes the database
@@ -49,20 +71,29 @@ func InitDatabase(database *models.Database) error {
 	if err := db.Register(); err != nil {
 		return err
 	}
+
+	version, err := GetSchemaVersion()
+	if err != nil {
+		return err
+	}
+	if version.Version != SchemaVersion {
+		return fmt.Errorf("unexpected database schema version, expected %s, got %s",
+			SchemaVersion, version.Version)
+	}
+
 	log.Info("initialize database completed")
 	return nil
 }
 
 func getDatabase(database *models.Database) (db Database, err error) {
 	switch database.Type {
-	case "", "mysql":
-		db = NewMySQL(database.MySQL.Host,
-			strconv.Itoa(database.MySQL.Port),
-			database.MySQL.Username,
-			database.MySQL.Password,
-			database.MySQL.Database)
-	case "sqlite":
-		db = NewSQLite(database.SQLite.File)
+	case "", "postgresql":
+		db = NewPQSQL(database.PostGreSQL.Host,
+			strconv.Itoa(database.PostGreSQL.Port),
+			database.PostGreSQL.Username,
+			database.PostGreSQL.Password,
+			database.PostGreSQL.Database,
+			false)
 	default:
 		err = fmt.Errorf("invalid database: %s", database.Type)
 	}
@@ -80,11 +111,39 @@ func GetOrmer() orm.Ormer {
 	return globalOrm
 }
 
+// ClearTable is the shortcut for test cases, it should be called only in test cases.
+func ClearTable(table string) error {
+	o := GetOrmer()
+	sql := fmt.Sprintf("delete from %s where 1=1", table)
+	if table == models.ProjectTable {
+		sql = fmt.Sprintf("delete from %s where project_id > 1", table)
+	}
+	if table == models.UserTable {
+		sql = fmt.Sprintf("delete from %s where user_id > 2", table)
+	}
+	if table == "project_metadata" { //make sure library is public
+		sql = fmt.Sprintf("delete from %s where id > 1", table)
+	}
+	_, err := o.Raw(sql).Exec()
+	return err
+}
+
 func paginateForRawSQL(sql string, limit, offset int64) string {
 	return fmt.Sprintf("%s limit %d offset %d", sql, limit, offset)
 }
 
-func escape(str string) string {
+func paginateForQuerySetter(qs orm.QuerySeter, page, size int64) orm.QuerySeter {
+	if size > 0 {
+		qs = qs.Limit(size)
+		if page > 0 {
+			qs = qs.Offset((page - 1) * size)
+		}
+	}
+	return qs
+}
+
+//Escape ..
+func Escape(str string) string {
 	str = strings.Replace(str, `%`, `\%`, -1)
 	str = strings.Replace(str, `_`, `\_`, -1)
 	return str

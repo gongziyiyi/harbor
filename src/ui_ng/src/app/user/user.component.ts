@@ -15,22 +15,33 @@ import { Component, OnInit, ViewChild, OnDestroy, ChangeDetectionStrategy, Chang
 import 'rxjs/add/operator/toPromise';
 import { Subscription } from 'rxjs/Subscription';
 
-import { UserService } from './user.service';
-import { User } from './user';
-import { NewUserModalComponent } from './new-user-modal.component';
 import { TranslateService } from '@ngx-translate/core';
+
+import { ConfirmationState, ConfirmationTargets, ConfirmationButtons } from '../shared/shared.const';
 import { ConfirmationDialogService } from '../shared/confirmation-dialog/confirmation-dialog.service';
 import { ConfirmationMessage } from '../shared/confirmation-dialog/confirmation-message';
-import { ConfirmationState, ConfirmationTargets, ConfirmationButtons } from '../shared/shared.const'
 import { MessageHandlerService } from '../shared/message-handler/message-handler.service';
-
 import { SessionService } from '../shared/session.service';
 import { AppConfigService } from '../app-config.service';
+import { NewUserModalComponent } from './new-user-modal.component';
+import { UserService } from './user.service';
+import { User } from './user';
+import {ChangePasswordComponent} from "./change-password/change-password.component";
+import {operateChanges, OperateInfo, OperationService, OperationState} from "harbor-ui";
+/**
+ * NOTES:
+ *   Pagination for this component is a temporary workaround solution. It will be replaced in future release.
+ *
+ * @export
+ * @class UserComponent
+ * @implements {OnInit}
+ * @implements {OnDestroy}
+ */
 
 @Component({
   selector: 'harbor-user',
   templateUrl: 'user.component.html',
-  styleUrls: ['user.component.css'],
+  styleUrls: ['user.component.scss'],
   providers: [UserService],
   changeDetection: ChangeDetectionStrategy.OnPush
 })
@@ -38,15 +49,22 @@ import { AppConfigService } from '../app-config.service';
 export class UserComponent implements OnInit, OnDestroy {
   users: User[] = [];
   originalUsers: Promise<User[]>;
-  onGoing: boolean = false;
-  adminMenuText: string = "";
-  adminColumn: string = "";
-  deletionSubscription: Subscription;
+  selectedRow: User[] = [];
+  ISADMNISTRATOR: string = "USER.ENABLE_ADMIN_ACTION";
 
   currentTerm: string;
+  totalCount: number = 0;
+  currentPage: number = 1;
+  timerHandler: any;
 
+  private onGoing: boolean = true;
+  private adminMenuText: string = "";
+  private adminColumn: string = "";
+  private deletionSubscription: Subscription;
   @ViewChild(NewUserModalComponent)
   newUserDialog: NewUserModalComponent;
+  @ViewChild(ChangePasswordComponent)
+  changePwdDialog: ChangePasswordComponent;
 
   constructor(
     private userService: UserService,
@@ -55,6 +73,7 @@ export class UserComponent implements OnInit, OnDestroy {
     private msgHandler: MessageHandlerService,
     private session: SessionService,
     private appConfigService: AppConfigService,
+    private operationService: OperationService,
     private ref: ChangeDetectorRef) {
     this.deletionSubscription = deletionDialogService.confirmationConfirm$.subscribe(confirmed => {
       if (confirmed &&
@@ -63,8 +82,6 @@ export class UserComponent implements OnInit, OnDestroy {
         this.delUser(confirmed.data);
       }
     });
-    let hnd = setInterval(()=>ref.markForCheck(), 100);
-    setTimeout(()=>clearInterval(hnd), 1000);
   }
 
   isMySelf(uid: number): boolean {
@@ -78,17 +95,40 @@ export class UserComponent implements OnInit, OnDestroy {
     return false;
   }
 
-  isMatchFilterTerm(terms: string, testedItem: string): boolean {
-    return testedItem.indexOf(terms) != -1;
+  get onlySelf(): boolean {
+    return this.selectedRow.length === 1 && this.isMySelf(this.selectedRow[0].user_id);
   }
 
   public get canCreateUser(): boolean {
     let appConfig = this.appConfigService.getConfig();
     if (appConfig) {
-      return appConfig.auth_mode != 'ldap_auth';
+      return !(appConfig.auth_mode === 'ldap_auth' || appConfig.auth_mode === 'uaa_auth');
     } else {
       return true;
     }
+  }
+
+  public get ifSameRole(): boolean {
+    let usersRole: number[] = [];
+    this.selectedRow.forEach(user => {
+      if (user.user_id === 0 || this.isMySelf(user.user_id)) {
+        return false;
+      }
+      if (user.has_admin_role) {
+        usersRole.push(1);
+      } else {
+        usersRole.push(0);
+      }
+    });
+    if (usersRole.length && usersRole.every(num => num === 0)) {
+      this.ISADMNISTRATOR = 'USER.ENABLE_ADMIN_ACTION';
+      return true;
+    }
+    if (usersRole.length && usersRole.every(num => num === 1)) {
+      this.ISADMNISTRATOR = 'USER.DISABLE_ADMIN_ACTION';
+      return true;
+    }
+    return false;
   }
 
   isSystemAdmin(u: User): string {
@@ -113,137 +153,236 @@ export class UserComponent implements OnInit, OnDestroy {
     return this.onGoing;
   }
 
-  ngOnInit(): void {
-    this.refreshUser();
-  }
+  ngOnInit(): void {}
 
   ngOnDestroy(): void {
     if (this.deletionSubscription) {
       this.deletionSubscription.unsubscribe();
     }
+
+    if (this.timerHandler) {
+      clearInterval(this.timerHandler);
+      this.timerHandler = null;
+    }
   }
 
-  //Filter items by keywords
+  openChangePwdModal(): void {
+    if (this.selectedRow.length === 1) {
+      this.changePwdDialog.open(this.selectedRow[0].user_id);
+    }
+
+  }
+
+  // Filter items by keywords
   doFilter(terms: string): void {
+    this.selectedRow = [];
     this.currentTerm = terms;
     this.originalUsers.then(users => {
       if (terms.trim() === "") {
-        this.users = users;
+        this.refreshUser((this.currentPage - 1) * 15, this.currentPage * 15);
       } else {
-        this.users = users.filter(user => {
+        let selectUsers = users.filter(user => {
           return this.isMatchFilterTerm(terms, user.username);
-        })
+        });
+        this.totalCount = selectUsers.length;
+        this.users = selectUsers.slice((this.currentPage - 1) * 15, this.currentPage * 15); // First page
+
+        this.forceRefreshView(5000);
       }
     });
-    let hnd = setInterval(()=>this.ref.markForCheck(), 100);
-    setTimeout(()=>clearInterval(hnd), 1000);
   }
 
-  //Disable the admin role for the specified user
-  changeAdminRole(user: User): void {
-    //Double confirm user is existing
-    if (!user || user.user_id === 0) {
-      return;
-    }
+  // Disable the admin role for the specified user
+  changeAdminRole(): void {
+    let promiseLists: any[] = [];
+    if (this.selectedRow.length) {
+      if (this.ISADMNISTRATOR === 'USER.ENABLE_ADMIN_ACTION') {
+        for (let i = 0; i < this.selectedRow.length; i++) {
+          // Double confirm user is existing
+          if (this.selectedRow[i].user_id === 0 || this.isMySelf(this.selectedRow[i].user_id)) {
+            continue;
+          }
+          let updatedUser: User = new User();
+          updatedUser.user_id = this.selectedRow[i].user_id;
 
-    if (this.isMySelf(user.user_id)) {
-      return;
-    }
+          updatedUser.has_admin_role = true; // Set as admin
+          promiseLists.push(this.userService.updateUserRole(updatedUser));
+        }
+      }
+      if (this.ISADMNISTRATOR === 'USER.DISABLE_ADMIN_ACTION') {
+        for (let i = 0; i < this.selectedRow.length; i++) {
+          // Double confirm user is existing
+          if (this.selectedRow[i].user_id === 0 || this.isMySelf(this.selectedRow[i].user_id)) {
+            continue;
+          }
+          let updatedUser: User = new User();
+          updatedUser.user_id = this.selectedRow[i].user_id;
 
-    //Value copy
-    let updatedUser: User = new User();
-    updatedUser.user_id = user.user_id;
+          updatedUser.has_admin_role = false; // Set as none admin
+          promiseLists.push(this.userService.updateUserRole(updatedUser));
+        }
+      }
 
-    if (user.has_admin_role === 0) {
-      updatedUser.has_admin_role = 1;//Set as admin
-    } else {
-      updatedUser.has_admin_role = 0;//Set as none admin
-    }
-
-    this.userService.updateUserRole(updatedUser)
-      .then(() => {
-        //Change view now
-        user.has_admin_role = updatedUser.has_admin_role;
-        let hnd = setInterval(()=>this.ref.markForCheck(), 100);
-        setTimeout(()=>clearInterval(hnd), 1000);
-      })
-      .catch(error => {
-        this.msgHandler.handleError(error);
-      })
+        Promise.all(promiseLists).then(() => {
+            this.selectedRow = [];
+            this.refresh();
+        })
+        .catch(error => {
+             this.selectedRow = [];
+             this.msgHandler.handleError(error);
+         });
+      }
   }
 
-  //Delete the specified user
-  deleteUser(user: User): void {
-    if (!user) {
+  // Delete the specified user
+  deleteUsers(users: User[]): void {
+    let userArr: string[] = [];
+    if (this.onlySelf) {
       return;
     }
 
-    if (this.isMySelf(user.user_id)) {
-      return; //Double confirm
+    if (users && users.length) {
+      users.forEach(user => {
+        userArr.push(user.username);
+      });
     }
-
-    //Confirm deletion
+    // Confirm deletion
     let msg: ConfirmationMessage = new ConfirmationMessage(
       "USER.DELETION_TITLE",
       "USER.DELETION_SUMMARY",
-      user.username,
-      user,
+      userArr.join(','),
+      users,
       ConfirmationTargets.USER,
       ConfirmationButtons.DELETE_CANCEL
     );
     this.deletionDialogService.openComfirmDialog(msg);
   }
 
-  delUser(user: User): void {
-    this.userService.deleteUser(user.user_id)
-      .then(() => {
-        //Remove it from current user list
-        //and then view refreshed
-        this.currentTerm = '';
-        this.originalUsers.then(users => {
-          this.users = users.filter(u => u.user_id != user.user_id);
-          this.msgHandler.showSuccess("USER.DELETE_SUCCESS");
-          let hnd = setInterval(()=>this.ref.markForCheck(), 100);
-          setTimeout(()=>clearInterval(hnd), 1000);
-        });
-      })
-      .catch(error => {
-        this.msgHandler.handleError(error);
+  delUser(users: User[]): void {
+    let promiseLists: any[] = [];
+    if (users && users.length) {
+      users.forEach(user => {
+        promiseLists.push(this.delOperate(user));
       });
+
+      Promise.all(promiseLists).then((item) => {
+        this.selectedRow = [];
+        this.currentTerm = '';
+        this.refresh();
+      });
+    }
   }
 
-  //Refresh the user list
-  refreshUser(): void {
-    //Start to get
+  delOperate(user: User) {
+    // init operation info
+    let operMessage = new OperateInfo();
+    operMessage.name = 'OPERATION.DELETE_USER';
+    operMessage.data.id = user.user_id;
+    operMessage.state = OperationState.progressing;
+    operMessage.data.name = user.username;
+    this.operationService.publishInfo(operMessage);
+
+    if (this.isMySelf(user.user_id)) {
+      this.translate.get('BATCH.DELETED_FAILURE').subscribe(res => {
+        operateChanges(operMessage, OperationState.failure, res);
+      });
+      return null;
+    }
+
+
+    return this.userService.deleteUser(user.user_id).then(() => {
+      this.translate.get('BATCH.DELETED_SUCCESS').subscribe(res => {
+        operateChanges(operMessage, OperationState.success);
+      });
+    }).catch(error => {
+      this.translate.get('BATCH.DELETED_FAILURE').subscribe(res => {
+        operateChanges(operMessage, OperationState.failure, res);
+      });
+     });
+  }
+
+  // Refresh the user list
+  refreshUser(from: number, to: number): void {
+    this.selectedRow = [];
+    // Start to get
     this.currentTerm = '';
     this.onGoing = true;
 
-    this.originalUsers = this.userService.getUsers()
-      .then(users => {
+    this.originalUsers = this.userService.getUsers();
+    this.originalUsers.then(users => {
         this.onGoing = false;
-        this.users = users;
+
+        this.totalCount = users.length;
+        this.users = users.slice(from, to); // First page
+
+        this.forceRefreshView(5000);
+
         return users;
       })
       .catch(error => {
         this.onGoing = false;
         this.msgHandler.handleError(error);
+        this.forceRefreshView(5000);
       });
-      let hnd = setInterval(()=>this.ref.markForCheck(), 100);
-      setTimeout(()=>clearInterval(hnd), 1000);
   }
 
-  //Add new user
+  // Add new user
   addNewUser(): void {
     if (!this.canCreateUser) {
-      return;// No response to this hacking action
+      return; // No response to this hacking action
     }
     this.newUserDialog.open();
   }
 
-  //Add user to the user list
+  // Add user to the user list
   addUserToList(user: User): void {
-    //Currently we can only add it by reloading all
-    this.refreshUser();
+    // Currently we can only add it by reloading all
+    this.refresh();
+  }
+
+  // Data loading
+  load(state: any): void {
+    this.selectedRow = [];
+    if (state && state.page) {
+      if (this.originalUsers) {
+        this.originalUsers.then(users => {
+          this.users = users.slice(state.page.from, state.page.to + 1);
+        });
+        this.forceRefreshView(5000);
+      } else {
+        this.refreshUser(state.page.from, state.page.to + 1);
+      }
+    } else {
+      // Refresh
+      this.refresh();
+    }
+  }
+
+  refresh(): void {
+    this.currentPage = 1; // Refresh pagination
+    this.refreshUser(0, 15);
+  }
+
+  SelectedChange(): void {
+    this.forceRefreshView(5000);
+  }
+
+  forceRefreshView(duration: number): void {
+    // Reset timer
+    if (this.timerHandler) {
+      clearInterval(this.timerHandler);
+    }
+    this.timerHandler = setInterval(() => this.ref.markForCheck(), 100);
+    setTimeout(() => {
+      if (this.timerHandler) {
+        clearInterval(this.timerHandler);
+        this.timerHandler = null;
+      }
+    }, duration);
+  }
+
+  private isMatchFilterTerm(terms: string, testedItem: string): boolean {
+    return testedItem.toLowerCase().indexOf(terms.toLowerCase()) !== -1;
   }
 
 }

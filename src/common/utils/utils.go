@@ -16,36 +16,37 @@ package utils
 
 import (
 	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
+	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/vmware/harbor/src/common/utils/log"
 )
 
-// FormatEndpoint formats endpoint
-func FormatEndpoint(endpoint string) string {
-	endpoint = strings.TrimSpace(endpoint)
+// ParseEndpoint parses endpoint to a URL
+func ParseEndpoint(endpoint string) (*url.URL, error) {
+	endpoint = strings.Trim(endpoint, " ")
 	endpoint = strings.TrimRight(endpoint, "/")
-	if !strings.HasPrefix(endpoint, "http://") &&
-		!strings.HasPrefix(endpoint, "https://") {
+	if len(endpoint) == 0 {
+		return nil, fmt.Errorf("empty URL")
+	}
+	i := strings.Index(endpoint, "://")
+	if i >= 0 {
+		scheme := endpoint[:i]
+		if scheme != "http" && scheme != "https" {
+			return nil, fmt.Errorf("invalid scheme: %s", scheme)
+		}
+	} else {
 		endpoint = "http://" + endpoint
 	}
 
-	return endpoint
-}
-
-// ParseEndpoint parses endpoint to a URL
-func ParseEndpoint(endpoint string) (*url.URL, error) {
-	endpoint = FormatEndpoint(endpoint)
-
-	u, err := url.Parse(endpoint)
-	if err != nil {
-		return nil, err
-	}
-	return u, nil
+	return url.ParseRequestURI(endpoint)
 }
 
 // ParseRepository splits a repository into two parts: project and rest
@@ -99,7 +100,9 @@ func TestTCPConn(addr string, timeout, interval int) error {
 					time.Sleep(time.Duration(interval) * time.Second)
 					continue
 				}
-				conn.Close()
+				if err = conn.Close(); err != nil {
+					log.Errorf("failed to close the connection: %v", err)
+				}
 				success <- 1
 				break
 			}
@@ -113,4 +116,54 @@ func TestTCPConn(addr string, timeout, interval int) error {
 		cancel <- 1
 		return fmt.Errorf("failed to connect to tcp:%s after %d seconds", addr, timeout)
 	}
+}
+
+// ParseTimeStamp parse timestamp to time
+func ParseTimeStamp(timestamp string) (*time.Time, error) {
+	i, err := strconv.ParseInt(timestamp, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	t := time.Unix(i, 0)
+	return &t, nil
+}
+
+//ConvertMapToStruct is used to fill the specified struct with map.
+func ConvertMapToStruct(object interface{}, values interface{}) error {
+	if object == nil {
+		return errors.New("nil struct is not supported")
+	}
+
+	if reflect.TypeOf(object).Kind() != reflect.Ptr {
+		return errors.New("object should be referred by pointer")
+	}
+
+	bytes, err := json.Marshal(values)
+	if err != nil {
+		return err
+	}
+
+	return json.Unmarshal(bytes, object)
+}
+
+// ParseProjectIDOrName parses value to ID(int64) or name(string)
+func ParseProjectIDOrName(value interface{}) (int64, string, error) {
+	if value == nil {
+		return 0, "", errors.New("harborIDOrName is nil")
+	}
+
+	var id int64
+	var name string
+	switch value.(type) {
+	case int:
+		i := value.(int)
+		id = int64(i)
+	case int64:
+		id = value.(int64)
+	case string:
+		name = value.(string)
+	default:
+		return 0, "", fmt.Errorf("unsupported type")
+	}
+	return id, name, nil
 }
